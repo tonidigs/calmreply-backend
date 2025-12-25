@@ -80,3 +80,9 @@ def grant_trial(user: TrialRequest):
     ).fetchone()[0]
 
     return {"status": "ok", "trial_credits_remaining": remaining}
+    from fastapi.responses import FileResponse
+
+@app.get("/download-db")
+def download_db():
+    return FileResponse("users.db", media_type="application/octet-stream", filename="users.db")
+
