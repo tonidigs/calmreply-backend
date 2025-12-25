@@ -1,45 +1,4 @@
-from fastapi import FastAPI
-from pydantic import BaseModel
-
-app = FastAPI()
-
-class TrialRequest(BaseModel):
-    name: str
-    email: str
-    message: str
-
-@app.get("/")
-def health():
-    return {"status": "ok"}
-
-@app.post("/free-trial")
-def free_trial(data: TrialRequest):
-    return {
-        "status": "success",
-        "email": data.email,
-        "reply": "This is a test reply. Backend is working."
-    }
-from fastapi import FastAPI
-from pydantic import BaseModel
-
-app = FastAPI()
-
-class TrialRequest(BaseModel):
-    email: str
-
-@app.post("/free-trial")
-def free_trial(data: TrialRequest):
-    # For now, just confirm receipt
-    # Later this is where we’ll store “3 trial credits”
-    return {
-        "email": data.email,
-        "trial_credits_granted": 3
-    }
-
-@app.get("/")
-def root():
-    return {"status": "ok"}
-    # main.py
+# main.py
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 import sqlite3
@@ -54,31 +13,70 @@ cursor = conn.cursor()
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS users (
     email TEXT PRIMARY KEY,
+    name TEXT,
+    message TEXT,
     trial_credits INTEGER DEFAULT 3,
     is_paid BOOLEAN DEFAULT 0
 )
 """)
 conn.commit()
 
-# Pydantic model for incoming requests
-class User(BaseModel):
+# Pydantic model for incoming requests (Free Trial)
+class TrialRequest(BaseModel):
+    name: str
     email: str
+    message: str
 
-@app.post("/grant_trial")
-def grant_trial(user: User):
-    cursor.execute("SELECT trial_credits FROM users WHERE email = ?", (user.email,))
+# Health check route
+@app.get("/")
+def health():
+    return {"status": "ok"}
+
+# Free trial route
+@app.post("/free-trial")
+def free_trial(data: TrialRequest):
+    cursor.execute("SELECT trial_credits FROM users WHERE email = ?", (data.email,))
     row = cursor.fetchone()
 
     if row:
-        if row[0] <= 0:
-            raise HTTPException(status_code=400, detail="No trial credits left")
-        # Deduct 1 trial credit
-        cursor.execute("UPDATE users SET trial_credits = trial_credits - 1 WHERE email = ?", (user.email,))
+        # User exists, return remaining trial credits
+        remaining = row[0]
     else:
-        # Add new user with 3 trial credits, deduct 1
-        cursor.execute("INSERT INTO users (email, trial_credits) VALUES (?, ?)", (user.email, 2))
+        # New user: insert with 3 trial credits
+        cursor.execute(
+            "INSERT INTO users (email, name, message, trial_credits) VALUES (?, ?, ?, ?)",
+            (data.email, data.name, data.message, 3)
+        )
+        conn.commit()
+        remaining = 3
 
+    return {
+        "status": "success",
+        "email": data.email,
+        "trial_credits_remaining": remaining,
+        "reply": "Backend is working."
+    }
+
+# Deduct one trial credit
+@app.post("/grant_trial")
+def grant_trial(user: TrialRequest):
+    cursor.execute("SELECT trial_credits FROM users WHERE email = ?", (user.email,))
+    row = cursor.fetchone()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if row[0] <= 0:
+        raise HTTPException(status_code=400, detail="No trial credits left")
+
+    cursor.execute(
+        "UPDATE users SET trial_credits = trial_credits - 1 WHERE email = ?",
+        (user.email,)
+    )
     conn.commit()
-    return {"status": "ok", "trial_credits_remaining": cursor.execute("SELECT trial_credits FROM users WHERE email = ?", (user.email,)).fetchone()[0]}
 
+    remaining = cursor.execute(
+        "SELECT trial_credits FROM users WHERE email = ?", (user.email,)
+    ).fetchone()[0]
 
+    return {"status": "ok", "trial_credits_remaining": remaining}
